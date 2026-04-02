@@ -54,12 +54,14 @@ cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
   <string>en</string>
   <key>CFBundleExecutable</key>
   <string>TrackpadOSU</string>
+  <key>CFBundleDisplayName</key>
+  <string>Mac Trackpad Tablet for OSU!</string>
   <key>CFBundleIdentifier</key>
   <string>com.eric.TrackpadOSU</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>TrackpadOSU</string>
+  <string>Mac Trackpad Tablet for OSU!</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -177,6 +179,8 @@ if [[ "$SKIP_LAUNCHCTL" == "1" ]]; then
   echo "Skipping background monitor registration because SKIP_LAUNCHCTL=1"
 else
   launchctl bootout "gui/$UID" "$OLD_PLIST_PATH" >/dev/null 2>&1 || true
+  launchctl enable "gui/$UID/com.eric.trackpadosu.monitor" >/dev/null 2>&1 || true
+  launchctl enable "gui/$UID/com.eric.TrackpadOSUHelper" >/dev/null 2>&1 || true
   "$EXECUTABLE_PATH" --unregister-helper >/dev/null 2>&1 || true
   pkill -x "TrackpadOSUHelper" >/dev/null 2>&1 || true
   launchctl bootstrap "gui/$UID" "$OLD_PLIST_PATH"
