@@ -3,7 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SOURCE_URL="https://raw.githubusercontent.com/EricPanDev/Mac-Trackpad-OSU-Tablet/refs/heads/main/app.swift"
+REPO_SLUG="EricPanDev/Mac-Trackpad-OSU-Tablet"
+COMMIT_API_URL="https://api.github.com/repos/$REPO_SLUG/commits/main"
 APP_NAME="TrackpadOSU"
 INSTALL_HOME="${INSTALL_HOME:-$HOME}"
 APP_DIR="$INSTALL_HOME/Applications/$APP_NAME.app"
@@ -41,6 +42,14 @@ SOURCE_TEMP_DIR="$(mktemp -d "$SUPPORT_DIR/source.XXXXXX")"
 SOURCE_FILE="$SOURCE_TEMP_DIR/app.swift"
 PERMISSION_STATUS_FILE="$(mktemp "$SUPPORT_DIR/permission-status.XXXXXX")"
 trap 'rm -rf "$SOURCE_TEMP_DIR"; rm -f "$PERMISSION_STATUS_FILE"' EXIT
+
+LATEST_SHA="$(curl -fsSL "$COMMIT_API_URL" | sed -n 's/^  \"sha\": \"\\([^\"]*\\)\",$/\\1/p' | head -n1)"
+if [[ -z "$LATEST_SHA" ]]; then
+  echo "Failed to determine the latest commit for $REPO_SLUG." >&2
+  exit 1
+fi
+
+SOURCE_URL="https://raw.githubusercontent.com/$REPO_SLUG/$LATEST_SHA/app.swift"
 
 echo "Downloading latest app.swift..."
 curl -fsSL "$SOURCE_URL" -o "$SOURCE_FILE"
