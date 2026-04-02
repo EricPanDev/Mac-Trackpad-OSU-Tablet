@@ -2559,10 +2559,26 @@ private func runApp() {
         processInstanceLock = instanceLock
     }
 
-    if options.mode == .monitor || options.mode == .helper {
+    let shouldRedirectLogs: Bool
+    let logFileName: String
+    switch options.mode {
+    case .monitor:
+        shouldRedirectLogs = true
+        logFileName = "monitor.log"
+    case .helper:
+        shouldRedirectLogs = true
+        logFileName = "helper.log"
+    case .launcher, .overlay, .selector:
+        shouldRedirectLogs = true
+        logFileName = "monitor.log"
+    case .requestPermissions, .checkOsuRunning, .registerHelper, .unregisterHelper:
+        shouldRedirectLogs = false
+        logFileName = ""
+    }
+
+    if shouldRedirectLogs {
         do {
             try FileManager.default.createDirectory(at: supportDirectoryURL, withIntermediateDirectories: true)
-            let logFileName = options.mode == .monitor ? "monitor.log" : "helper.log"
             let logPath = supportDirectoryURL.appendingPathComponent(logFileName).path
             _ = logPath.withCString { freopen($0, "a", stdout) }
             _ = logPath.withCString { freopen($0, "a", stderr) }
