@@ -19,6 +19,7 @@ private let selectorTrackpadAspectRatio: CGFloat = 1.6
 private let knownOsuBundleIdentifiers = ["sh.ppy.osu.lazer"]
 private let mainAppBundleIdentifier = "com.eric.TrackpadOSU"
 private let helperAppBundleIdentifier = "com.eric.TrackpadOSUHelper"
+private let displayAppName = "Mac Trackpad Tablet for OSU!"
 
 private let supportDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/Application Support/TrackpadOSU", isDirectory: true)
@@ -88,6 +89,7 @@ private struct OutputRegion {
 private struct TouchSnapshot {
     let id: String
     let device: String
+    let firstSeenSequence: Int64
     let normalizedX: Double
     let normalizedY: Double
     let deviceX: Double
@@ -162,6 +164,15 @@ private struct PermissionSnapshot {
 
     var missingDescription: String {
         missingItems.joined(separator: ", ")
+    }
+}
+
+private func preferredTouch(from activeTouches: [String: TouchSnapshot]) -> TouchSnapshot? {
+    activeTouches.values.min { lhs, rhs in
+        if lhs.firstSeenSequence != rhs.firstSeenSequence {
+            return lhs.firstSeenSequence < rhs.firstSeenSequence
+        }
+        return lhs.id < rhs.id
     }
 }
 
@@ -744,6 +755,7 @@ private final class GlobalTrackpadMonitor {
     private let lock = NSLock()
     private var deviceTouches: [String: [String: TouchSnapshot]] = [:]
     private var activeTouches: [String: TouchSnapshot] = [:]
+    private var nextTouchSequence: Int64 = 0
     private var devices: [UnsafeMutableRawPointer] = []
     private var deviceList: CFArray?
     private var libraryHandle: UnsafeMutableRawPointer?
@@ -840,14 +852,21 @@ private final class GlobalTrackpadMonitor {
         debugEnabled = enabled
     }
 
-    private func makeTouchData(deviceKey: String, data: MTData) -> TouchSnapshot {
+    private func allocateTouchSequence() -> Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        nextTouchSequence += 1
+        return nextTouchSequence
+    }
+
+    private func makeTouchData(deviceKey: String, touchKey: String, firstSeenSequence: Int64, data: MTData) -> TouchSnapshot {
         let normalizedX = clamp(Double(data.normalized.position.x), min: 0.0, max: 1.0)
         let normalizedY = clamp(Double(data.normalized.position.y), min: 0.0, max: 1.0)
-        let touchKey = "\(deviceKey):\(data.identifier)"
 
         return TouchSnapshot(
             id: touchKey,
             device: deviceKey,
+            firstSeenSequence: firstSeenSequence,
             normalizedX: normalizedX,
             normalizedY: normalizedY,
             deviceX: normalizedX,
@@ -872,7 +891,7 @@ private final class GlobalTrackpadMonitor {
 
         for touch in touches {
             print(
-                "\(label): id=\(touch.id) normalized=(\(String(format: "%.4f", touch.normalizedX)), \(String(format: "%.4f", touch.normalizedY))) trackpad=(\(String(format: "%.4f", touch.deviceX)), \(String(format: "%.4f", touch.deviceY))) size=\(String(format: "%.4f", touch.size)) region=\(touch.region)"
+                "\(label): id=\(touch.id) sequence=\(touch.firstSeenSequence) normalized=(\(String(format: "%.4f", touch.normalizedX)), \(String(format: "%.4f", touch.normalizedY))) trackpad=(\(String(format: "%.4f", touch.deviceX)), \(String(format: "%.4f", touch.deviceY))) size=\(String(format: "%.4f", touch.size)) region=\(touch.region)"
             )
         }
     }
@@ -883,7 +902,9 @@ private final class GlobalTrackpadMonitor {
         }
 
         let deviceKey = String(UInt(bitPattern: device))
+        lock.lock()
         let previousTouches = deviceTouches[deviceKey] ?? [:]
+        lock.unlock()
         let touchCount = max(0, nFingers)
         let buffer: UnsafeBufferPointer<MTData>
         if touchCount > 0, let dataPtr {
@@ -899,7 +920,14 @@ private final class GlobalTrackpadMonitor {
         var activeIDs = Set<String>()
 
         for data in buffer {
-            let touch = makeTouchData(deviceKey: deviceKey, data: data)
+            let touchKey = "\(deviceKey):\(data.identifier)"
+            let firstSeenSequence = previousTouches[touchKey]?.firstSeenSequence ?? allocateTouchSequence()
+            let touch = makeTouchData(
+                deviceKey: deviceKey,
+                touchKey: touchKey,
+                firstSeenSequence: firstSeenSequence,
+                data: data
+            )
             activeIDs.insert(touch.id)
             newTouches[touch.id] = touch
 
@@ -1026,11 +1054,7 @@ private final class RegionSelectorView: NSView {
         }
 
         let activeTouches = touchMonitor.getActiveTouches()
-        guard let firstKey = activeTouches.keys.sorted().first else {
-            return nil
-        }
-
-        return activeTouches[firstKey]
+        return preferredTouch(from: activeTouches)
     }
 
     private func commit(region newRegion: TrackpadRegion) {
@@ -1353,7 +1377,7 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
             backing: .buffered,
             defer: false
         )
-        window.title = "Trackpad Region Selector"
+        window.title = displayAppName
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.07, blue: 0.09, alpha: 1.0)
@@ -1367,12 +1391,12 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
         rootView.layer?.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.07, blue: 0.09, alpha: 1.0).cgColor
 
         let titleLabel = makeSelectorLabel(
-            "Trackpad Region Selector",
+            displayAppName,
             font: NSFont.systemFont(ofSize: 28.0, weight: .semibold),
             color: NSColor(calibratedWhite: 0.98, alpha: 1.0)
         )
         let subtitleLabel = makeSelectorLabel(
-            "Drag to preview the active trackpad area. Red dot = current finger position. Press R to reset to full trackpad.",
+            "Choose which part of your trackpad maps to osu!. Drag to preview. Red dot = current finger position. Press R to reset to full trackpad.",
             font: NSFont.systemFont(ofSize: 13.5, weight: .regular),
             color: NSColor(calibratedWhite: 0.76, alpha: 1.0)
         )
@@ -1564,7 +1588,7 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
             panel.allowedFileTypes = ["json"]
         }
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue = "TrackpadOSU-region.json"
+        panel.nameFieldStringValue = "MacTrackpadTabletForOSU-region.json"
         panel.prompt = "Export"
 
         panel.beginSheetModal(for: window) { [weak self] response in
@@ -1838,8 +1862,12 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
             return touch
         }
 
-        primaryTouchID = activeTouches.keys.sorted().first
-        return primaryTouchID.flatMap { activeTouches[$0] }
+        guard let touch = preferredTouch(from: activeTouches) else {
+            return nil
+        }
+
+        primaryTouchID = touch.id
+        return touch
     }
 
     private func mapTouchToAbsolutePoint(_ touch: TouchSnapshot, bounds: WindowBounds) -> CGPoint? {
@@ -2142,7 +2170,7 @@ private final class PermissionRequestController: NSObject, NSApplicationDelegate
         } else {
             print("permission status on re-check: \(snapshot.summary)")
         }
-        print("please provide TrackpadOSU these permissions in System Settings > Privacy & Security: \(snapshot.missingDescription)")
+        print("please provide \(displayAppName) these permissions in System Settings > Privacy & Security: \(snapshot.missingDescription)")
         exitCode = 3
         writePermissionStatusFile()
         NSApp.terminate(nil)
