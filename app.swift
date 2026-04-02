@@ -1930,7 +1930,7 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
 
     private func makeAbsoluteMoveEvent(at point: CGPoint) -> CGEvent? {
         guard let moveEvent = CGEvent(
-            mouseEventSource: absolutePointerEventSource,
+            mouseEventSource: usesModernAbsolutePointerInjection ? absolutePointerEventSource : nil,
             mouseType: .mouseMoved,
             mouseCursorPosition: point,
             mouseButton: .left
@@ -1942,14 +1942,28 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
         return moveEvent
     }
 
+    private func moveCursorDirectlyForModernMacOS(to point: CGPoint) -> CGError {
+        var displayID = CGMainDisplayID()
+        var matchingDisplayCount: UInt32 = 0
+        let lookupError = withUnsafeMutablePointer(to: &displayID) { displayPointer in
+            CGGetDisplaysWithPoint(point, 1, displayPointer, &matchingDisplayCount)
+        }
+
+        if lookupError == .success, matchingDisplayCount > 0 {
+            let bounds = CGDisplayBounds(displayID)
+            let localPoint = CGPoint(x: point.x - bounds.origin.x, y: point.y - bounds.origin.y)
+            return CGDisplayMoveCursorToPoint(displayID, localPoint)
+        }
+
+        return CGWarpMouseCursorPosition(point)
+    }
+
     private func injectAbsolutePointer(to point: CGPoint) {
         if usesModernAbsolutePointerInjection {
-            if let hidMoveEvent = makeAbsoluteMoveEvent(at: point) {
-                hidMoveEvent.post(tap: .cghidEventTap)
-            }
+            let moveResult = moveCursorDirectlyForModernMacOS(to: point)
 
             if !didLogAbsoluteInjectionMode {
-                print("absolute pointer injection active: mode=hid_event_source_with_mouse_suppression")
+                print("absolute pointer injection active: mode=display_move_cursor move_result=\(moveResult.rawValue)")
                 didLogAbsoluteInjectionMode = true
             }
             return
