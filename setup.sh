@@ -37,9 +37,10 @@ fi
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$SUPPORT_DIR" "$INSTALL_HOME/Applications"
 mkdir -p "$(dirname "$OLD_PLIST_PATH")"
 
-SOURCE_FILE="$(mktemp "$SUPPORT_DIR/app.swift.XXXXXX")"
+SOURCE_TEMP_DIR="$(mktemp -d "$SUPPORT_DIR/source.XXXXXX")"
+SOURCE_FILE="$SOURCE_TEMP_DIR/app.swift"
 PERMISSION_STATUS_FILE="$(mktemp "$SUPPORT_DIR/permission-status.XXXXXX")"
-trap 'rm -f "$SOURCE_FILE" "$PERMISSION_STATUS_FILE"' EXIT
+trap 'rm -rf "$SOURCE_TEMP_DIR"; rm -f "$PERMISSION_STATUS_FILE"' EXIT
 
 echo "Downloading latest app.swift..."
 curl -fsSL "$SOURCE_URL" -o "$SOURCE_FILE"
