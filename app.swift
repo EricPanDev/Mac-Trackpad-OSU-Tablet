@@ -1396,7 +1396,7 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
             color: NSColor(calibratedWhite: 0.98, alpha: 1.0)
         )
         let subtitleLabel = makeSelectorLabel(
-            "Choose which part of your trackpad maps to osu!. Drag to preview. Red dot = current finger position. Press R to reset to full trackpad.",
+            "Choose which part of your trackpad maps to osu!.",
             font: NSFont.systemFont(ofSize: 13.5, weight: .regular),
             color: NSColor(calibratedWhite: 0.76, alpha: 1.0)
         )
