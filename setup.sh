@@ -43,7 +43,7 @@ SOURCE_FILE="$SOURCE_TEMP_DIR/app.swift"
 PERMISSION_STATUS_FILE="$(mktemp "$SUPPORT_DIR/permission-status.XXXXXX")"
 trap 'rm -rf "$SOURCE_TEMP_DIR"; rm -f "$PERMISSION_STATUS_FILE"' EXIT
 
-LATEST_SHA="$(curl -fsSL "$COMMIT_API_URL" | sed -n 's/^  \"sha\": \"\\([^\"]*\\)\",$/\\1/p' | head -n1)"
+LATEST_SHA="$(curl -fsSL "$COMMIT_API_URL" | awk -F'"' '/^  "sha": "/ { print $4; exit }')"
 if [[ -z "$LATEST_SHA" ]]; then
   echo "Failed to determine the latest commit for $REPO_SLUG." >&2
   exit 1
