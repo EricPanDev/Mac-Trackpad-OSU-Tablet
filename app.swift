@@ -1218,6 +1218,7 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
     private var lastSignature: String?
     private var lastInMap: Bool?
     private var lastOsuBounds: WindowBounds?
+    private var lastOsuProcessID: pid_t?
     private var lastAbsolutePoint: CGPoint?
     private var primaryTouchID: String?
     private var pointerLocked = false
@@ -1230,6 +1231,7 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
     private var postEventAccessGranted = false
     private var didLogMissingAccessibilityPermission = false
     private var didLogMissingPostPermission = false
+    private var didLogAbsoluteInjectionMode = false
     private var hasSeenOsuProcess = false
     private var didAttemptOsuLaunch = false
     private var hasLoggedWaitingForOsuLaunch = false
@@ -1851,6 +1853,21 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
         print("pointer movement restored")
     }
 
+    private func withPausedMouseSuppressionTap<T>(_ body: () -> T) -> T {
+        guard pointerLocked, let mouseMoveTap else {
+            return body()
+        }
+
+        CGEvent.tapEnable(tap: mouseMoveTap, enable: false)
+        defer {
+            if pointerLocked {
+                CGEvent.tapEnable(tap: mouseMoveTap, enable: true)
+            }
+        }
+
+        return body()
+    }
+
     private func getPrimaryTouch() -> TouchSnapshot? {
         let activeTouches = touchMonitor.getActiveTouches()
         guard !activeTouches.isEmpty else {
@@ -1905,6 +1922,42 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
         )
     }
 
+    private func makeAbsoluteMoveEvent(at point: CGPoint) -> CGEvent? {
+        guard let moveEvent = CGEvent(
+            mouseEventSource: nil,
+            mouseType: .mouseMoved,
+            mouseCursorPosition: point,
+            mouseButton: .left
+        ) else {
+            return nil
+        }
+
+        moveEvent.setIntegerValueField(.eventSourceUserData, value: absoluteMouseEventUserData)
+        return moveEvent
+    }
+
+    private func injectAbsolutePointer(to point: CGPoint) {
+        let targetPid = lastOsuProcessID
+        withPausedMouseSuppressionTap {
+            let warpResult = CGWarpMouseCursorPosition(point)
+
+            if let hidMoveEvent = makeAbsoluteMoveEvent(at: point) {
+                hidMoveEvent.post(tap: .cghidEventTap)
+            }
+
+            if let targetPid, let pidMoveEvent = makeAbsoluteMoveEvent(at: point) {
+                pidMoveEvent.postToPid(targetPid)
+            }
+
+            if !didLogAbsoluteInjectionMode {
+                print(
+                    "absolute pointer injection active: warp_result=\(warpResult.rawValue) hid_post=true pid_post=\(targetPid != nil)"
+                )
+                didLogAbsoluteInjectionMode = true
+            }
+        }
+    }
+
     private func updateAbsolutePointerFromCurrentTouch() {
         guard overlayMode, let lastOsuBounds else {
             primaryTouchID = nil
@@ -1937,17 +1990,7 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
             return
         }
 
-        guard let moveEvent = CGEvent(
-            mouseEventSource: nil,
-            mouseType: .mouseMoved,
-            mouseCursorPosition: point,
-            mouseButton: .left
-        ) else {
-            return
-        }
-
-        moveEvent.setIntegerValueField(.eventSourceUserData, value: absoluteMouseEventUserData)
-        moveEvent.post(tap: .cgSessionEventTap)
+        injectAbsolutePointer(to: point)
         lastAbsolutePoint = point
     }
 
@@ -1971,6 +2014,7 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
         print("disabling absolute positioning: \(reason)")
         overlayMode = false
         lastOsuBounds = nil
+        lastOsuProcessID = nil
         lastAbsolutePoint = nil
         primaryTouchID = nil
         touchMonitor.setDebugEnabled(false)
@@ -2044,6 +2088,7 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
             if overlayMode {
                 hideOverlay(reason: "osu is not active")
             }
+            lastOsuProcessID = nil
             return
         }
 
@@ -2051,10 +2096,13 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
             lastSignature = nil
             lastInMap = nil
             lastOsuBounds = nil
+            lastOsuProcessID = nil
             logOsuWindowDiagnostics(reason: "osu window not found")
             hideOverlay(reason: "osu window not found")
             return
         }
+
+        lastOsuProcessID = pid_t(windowInfo.pid)
 
         let signature = "\(windowInfo.pid)|\(windowInfo.owner)|\(windowInfo.cgTitle)|\(windowInfo.title)|\(windowInfo.accessibilityTitle ?? "")|\(windowInfo.bounds.x)|\(windowInfo.bounds.y)|\(windowInfo.bounds.width)|\(windowInfo.bounds.height)"
         if signature != lastSignature {
