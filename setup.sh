@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SOURCE_URL="https://raw.githubusercontent.com/EricPanDev/Mac-Trackpad-OSU-Tablet/refs/heads/main/app.swift\?t=$(date +%s)"
+SOURCE_URL="https://raw.githubusercontent.com/EricPanDev/Mac-Trackpad-OSU-Tablet/refs/heads/main/app.swift"
 APP_NAME="TrackpadOSU"
 INSTALL_HOME="${INSTALL_HOME:-$HOME}"
 APP_DIR="$INSTALL_HOME/Applications/$APP_NAME.app"
