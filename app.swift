@@ -1235,12 +1235,32 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
     private var hasSeenOsuProcess = false
     private var didAttemptOsuLaunch = false
     private var hasLoggedWaitingForOsuLaunch = false
+    private let usesModernAbsolutePointerInjection = ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26
+    private let absolutePointerEventSource = OverlayAppController.makeAbsolutePointerEventSource()
 
     init(selectorOnly: Bool, forceShowSelector: Bool, launchesOsuSession: Bool = false) {
         self.selectorOnly = selectorOnly
         self.forceShowSelector = forceShowSelector
         self.launchesOsuSession = launchesOsuSession
         super.init()
+    }
+
+    private static func makeAbsolutePointerEventSource() -> CGEventSource? {
+        guard let source = CGEventSource(stateID: .combinedSessionState) else {
+            return nil
+        }
+
+        let allowNonMouseEvents = CGEventFilterMask(rawValue: 0x00000002 | 0x00000004)
+        source.setLocalEventsFilterDuringSuppressionState(
+            allowNonMouseEvents,
+            state: CGEventSuppressionState(rawValue: 0)!
+        )
+        source.setLocalEventsFilterDuringSuppressionState(
+            allowNonMouseEvents,
+            state: CGEventSuppressionState(rawValue: 1)!
+        )
+        source.localEventsSuppressionInterval = 0.25
+        return source
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -1849,23 +1869,9 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
         if let mouseMoveTap {
             CGEvent.tapEnable(tap: mouseMoveTap, enable: false)
         }
+
         pointerLocked = false
         print("pointer movement restored")
-    }
-
-    private func withPausedMouseSuppressionTap<T>(_ body: () -> T) -> T {
-        guard pointerLocked, let mouseMoveTap else {
-            return body()
-        }
-
-        CGEvent.tapEnable(tap: mouseMoveTap, enable: false)
-        defer {
-            if pointerLocked {
-                CGEvent.tapEnable(tap: mouseMoveTap, enable: true)
-            }
-        }
-
-        return body()
     }
 
     private func getPrimaryTouch() -> TouchSnapshot? {
@@ -1924,7 +1930,7 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
 
     private func makeAbsoluteMoveEvent(at point: CGPoint) -> CGEvent? {
         guard let moveEvent = CGEvent(
-            mouseEventSource: nil,
+            mouseEventSource: absolutePointerEventSource,
             mouseType: .mouseMoved,
             mouseCursorPosition: point,
             mouseButton: .left
@@ -1937,24 +1943,25 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
     }
 
     private func injectAbsolutePointer(to point: CGPoint) {
-        let targetPid = lastOsuProcessID
-        withPausedMouseSuppressionTap {
-            let warpResult = CGWarpMouseCursorPosition(point)
-
+        if usesModernAbsolutePointerInjection {
             if let hidMoveEvent = makeAbsoluteMoveEvent(at: point) {
                 hidMoveEvent.post(tap: .cghidEventTap)
             }
 
-            if let targetPid, let pidMoveEvent = makeAbsoluteMoveEvent(at: point) {
-                pidMoveEvent.postToPid(targetPid)
-            }
-
             if !didLogAbsoluteInjectionMode {
-                print(
-                    "absolute pointer injection active: warp_result=\(warpResult.rawValue) hid_post=true pid_post=\(targetPid != nil)"
-                )
+                print("absolute pointer injection active: mode=hid_event_source_with_mouse_suppression")
                 didLogAbsoluteInjectionMode = true
             }
+            return
+        }
+
+        if let moveEvent = makeAbsoluteMoveEvent(at: point) {
+            moveEvent.post(tap: .cgSessionEventTap)
+        }
+
+        if !didLogAbsoluteInjectionMode {
+            print("absolute pointer injection active: mode=session_event_post")
+            didLogAbsoluteInjectionMode = true
         }
     }
 
