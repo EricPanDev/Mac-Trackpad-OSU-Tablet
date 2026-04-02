@@ -119,7 +119,7 @@ else
     rm -f "$PERMISSION_STATUS_FILE"
 
     set +e
-    open -W -n "$APP_DIR" --args --request-permissions "--permission-status-file=$PERMISSION_STATUS_FILE" "$@"
+    open -n "$APP_DIR" --args --request-permissions "--permission-status-file=$PERMISSION_STATUS_FILE" "$@"
     local open_exit_code=$?
     set -e
 
@@ -128,6 +128,12 @@ else
       PERMISSION_EXIT_CODE="$open_exit_code"
       return
     fi
+
+    local attempts=0
+    while [[ ! -f "$PERMISSION_STATUS_FILE" && "$attempts" -lt 150 ]]; do
+      sleep 0.2
+      attempts=$((attempts + 1))
+    done
 
     if [[ ! -f "$PERMISSION_STATUS_FILE" ]]; then
       echo "Permission helper did not report a result." >&2
