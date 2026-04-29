@@ -1211,7 +1211,8 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
     private var updateTimer: Timer?
     private var observerTokens: [NSObjectProtocol] = []
 
-    private var performanceActivity: NSObjectProtocol?
+    private var performanceActivity: Any?
+    private let highFrequencyInterval: TimeInterval = 1.0 / 240.0
     private var mouseMoveTap: CFMachPort?
     private var mouseMoveTapSource: CFRunLoopSource?
 
@@ -1280,8 +1281,13 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
             installWorkspaceObservers()
             startTimers()
         } else {
-            updateTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            updateTimer = Timer.scheduledTimer(withTimeInterval: highFrequencyInterval, repeats: true) { [weak self] _ in
                 self?.regionSelectorView?.needsDisplay = true
+            }
+            updateTimer?.tolerance = 0.0
+
+            if let updateTimer {
+                RunLoop.main.add(updateTimer, forMode: .common)
             }
         }
 
@@ -1353,10 +1359,14 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
     }
 
     private func startTimers() {
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+        updateTimer = Timer.scheduledTimer(withTimeInterval: highFrequencyInterval, repeats: true) { [weak self] _ in
             self?.updateOverlay()
         }
         updateTimer?.tolerance = 0.0
+
+        if let updateTimer {
+            RunLoop.main.add(updateTimer, forMode: .common)
+        }
     }
 
     private func logOsuWindowDiagnostics(reason: String) {
@@ -1763,11 +1773,18 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
             return
         }
 
+        let options: ProcessInfo.ActivityOptions = [
+            .userInitiatedAllowingIdleSystemSleep,
+            .latencyCritical,
+            .suddenTerminationDisabled,
+            .automaticTerminationDisabled,
+        ]
+
         performanceActivity = ProcessInfo.processInfo.beginActivity(
-            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical, .suddenTerminationDisabled, .automaticTerminationDisabled],
-            reason: "Low-latency osu absolute positioning"
+            options: options,
+            reason: "Prevent App Nap and keep low-latency high-frequency osu absolute positioning active"
         )
-        print("requested macOS low-latency activity")
+        print("requested macOS latency-critical activity to prevent App Nap")
     }
 
     private func endPerformanceActivity() {
@@ -1777,7 +1794,7 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
 
         ProcessInfo.processInfo.endActivity(performanceActivity)
         self.performanceActivity = nil
-        print("ended macOS low-latency activity")
+        print("ended macOS latency-critical activity")
     }
 
     private func eventMask(for eventTypes: [CGEventType]) -> CGEventMask {
