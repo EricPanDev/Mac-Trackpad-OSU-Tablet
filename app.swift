@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import CoreVideo
 import Darwin
 import Foundation
 import ServiceManagement
@@ -1208,11 +1209,12 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
     private weak var selectorStatusLabel: NSTextField?
     private weak var selectorSaveButton: NSButton?
 
-    private var updateTimer: Timer?
     private var observerTokens: [NSObjectProtocol] = []
 
-    private var performanceActivity: Any?
-    private let highFrequencyInterval: TimeInterval = 1.0 / 240.0
+    private var performanceActivity: NSObjectProtocol?
+    private var displayLink: CVDisplayLink?
+    private let displayLinkPendingLock = NSLock()
+    private var displayLinkFramePending = false
     private var mouseMoveTap: CFMachPort?
     private var mouseMoveTapSource: CFRunLoopSource?
 
@@ -1244,6 +1246,16 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
         self.forceShowSelector = forceShowSelector
         self.launchesOsuSession = launchesOsuSession
         super.init()
+    }
+
+    private static let displayLinkCallback: CVDisplayLinkOutputCallback = { _, _, _, _, _, userInfo in
+        guard let userInfo else {
+            return kCVReturnSuccess
+        }
+
+        let controller = Unmanaged<OverlayAppController>.fromOpaque(userInfo).takeUnretainedValue()
+        controller.displayLinkDidTick()
+        return kCVReturnSuccess
     }
 
     private static func makeAbsolutePointerEventSource() -> CGEventSource? {
@@ -1279,17 +1291,8 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
 
         if !selectorOnly {
             installWorkspaceObservers()
-            startTimers()
-        } else {
-            updateTimer = Timer.scheduledTimer(withTimeInterval: highFrequencyInterval, repeats: true) { [weak self] _ in
-                self?.regionSelectorView?.needsDisplay = true
-            }
-            updateTimer?.tolerance = 0.0
-
-            if let updateTimer {
-                RunLoop.main.add(updateTimer, forMode: .common)
-            }
         }
+        startDisplayLink()
 
         print(
             "absolute positioning config: trackpad_region=\(trackpadInputRegion) output_region=\(outputRegion) invert_x=\(absolutePositionInvertX) invert_y=\(absolutePositionInvertY)"
@@ -1329,8 +1332,7 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        updateTimer?.invalidate()
-        updateTimer = nil
+        stopDisplayLink()
 
         unlockPointer()
         endPerformanceActivity()
@@ -1358,14 +1360,78 @@ private final class OverlayAppController: NSObject, NSApplicationDelegate, NSWin
         }
     }
 
-    private func startTimers() {
-        updateTimer = Timer.scheduledTimer(withTimeInterval: highFrequencyInterval, repeats: true) { [weak self] _ in
-            self?.updateOverlay()
+    private func startDisplayLink() {
+        guard displayLink == nil else {
+            return
         }
-        updateTimer?.tolerance = 0.0
 
-        if let updateTimer {
-            RunLoop.main.add(updateTimer, forMode: .common)
+        var newDisplayLink: CVDisplayLink?
+        let createResult = CVDisplayLinkCreateWithActiveCGDisplays(&newDisplayLink)
+        guard createResult == kCVReturnSuccess, let newDisplayLink else {
+            print("CVDisplayLink unavailable: create_result=\(createResult)")
+            return
+        }
+
+        let userInfo = Unmanaged.passUnretained(self).toOpaque()
+        let callbackResult = CVDisplayLinkSetOutputCallback(
+            newDisplayLink,
+            Self.displayLinkCallback,
+            userInfo
+        )
+        guard callbackResult == kCVReturnSuccess else {
+            print("CVDisplayLink unavailable: callback_result=\(callbackResult)")
+            return
+        }
+
+        let startResult = CVDisplayLinkStart(newDisplayLink)
+        guard startResult == kCVReturnSuccess else {
+            print("CVDisplayLink unavailable: start_result=\(startResult)")
+            return
+        }
+
+        displayLink = newDisplayLink
+        print("CVDisplayLink started for display-synced high-frequency updates")
+    }
+
+    private func stopDisplayLink() {
+        guard let displayLink else {
+            return
+        }
+
+        CVDisplayLinkStop(displayLink)
+        CVDisplayLinkSetOutputCallback(displayLink, nil, nil)
+        self.displayLink = nil
+
+        displayLinkPendingLock.lock()
+        displayLinkFramePending = false
+        displayLinkPendingLock.unlock()
+
+        print("CVDisplayLink stopped")
+    }
+
+    private func displayLinkDidTick() {
+        displayLinkPendingLock.lock()
+        if displayLinkFramePending {
+            displayLinkPendingLock.unlock()
+            return
+        }
+        displayLinkFramePending = true
+        displayLinkPendingLock.unlock()
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.displayLinkPendingLock.lock()
+            self.displayLinkFramePending = false
+            self.displayLinkPendingLock.unlock()
+
+            self.regionSelectorView?.needsDisplay = true
+
+            if !self.selectorOnly {
+                self.updateOverlay()
+            }
         }
     }
 
